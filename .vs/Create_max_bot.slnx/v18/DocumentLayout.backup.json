@@ -1,0 +1,45 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\vld66\\OneDrive\\Desktop\\Create_max_bot\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{273A4603-508F-CE97-1EF1-75DA571EB874}|Create_max_bot\\Create_max_bot.csproj|c:\\users\\vld66\\onedrive\\desktop\\create_max_bot\\create_max_bot\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{273A4603-508F-CE97-1EF1-75DA571EB874}|Create_max_bot\\Create_max_bot.csproj|solutionrelative:create_max_bot\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 2,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{1c4feeaa-4718-4aa9-859d-94ce25d182ba}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:1:0:{3ae79031-e1bc-11d0-8f78-00a0c9110057}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "Program.cs",
+              "DocumentMoniker": "C:\\Users\\vld66\\OneDrive\\Desktop\\Create_max_bot\\Create_max_bot\\Program.cs",
+              "RelativeDocumentMoniker": "Create_max_bot\\Program.cs",
+              "ToolTip": "C:\\Users\\vld66\\OneDrive\\Desktop\\Create_max_bot\\Create_max_bot\\Program.cs*",
+              "RelativeToolTip": "Create_max_bot\\Program.cs*",
+              "ViewState": "AgIAAAoAAAAAAAAAAAAQwDoAAAA/AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-06-02T15:25:26.651Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

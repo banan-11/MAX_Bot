@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "dgSpecHash": "PaqyDXX5DKo=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\vld66\\OneDrive\\Desktop\\Create_max_bot\\Create_max_bot\\Create_max_bot.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.bcl.asyncinterfaces\\10.0.8\\microsoft.bcl.asyncinterfaces.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.bcl.memory\\10.0.8\\microsoft.bcl.memory.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.configuration\\10.0.8\\microsoft.extensions.configuration.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.configuration.abstractions\\10.0.8\\microsoft.extensions.configuration.abstractions.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.configuration.binder\\10.0.8\\microsoft.extensions.configuration.binder.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.dependencyinjection\\10.0.8\\microsoft.extensions.dependencyinjection.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\10.0.8\\microsoft.extensions.dependencyinjection.abstractions.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.diagnostics\\10.0.8\\microsoft.extensions.diagnostics.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.diagnostics.abstractions\\10.0.8\\microsoft.extensions.diagnostics.abstractions.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.http\\10.0.8\\microsoft.extensions.http.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.logging\\10.0.8\\microsoft.extensions.logging.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\10.0.8\\microsoft.extensions.logging.abstractions.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.options\\10.0.8\\microsoft.extensions.options.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.options.configurationextensions\\10.0.8\\microsoft.extensions.options.configurationextensions.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\microsoft.extensions.primitives\\10.0.8\\microsoft.extensions.primitives.10.0.8.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\npgsql\\10.0.3\\npgsql.10.0.3.nupkg.sha512",
+    "C:\\Users\\vld66\\.nuget\\packages\\saasoft.max.bot\\1.1.1\\saasoft.max.bot.1.1.1.nupkg.sha512"
+  ],
+  "logs": []
+}
