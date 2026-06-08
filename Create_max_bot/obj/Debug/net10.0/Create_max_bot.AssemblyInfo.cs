@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Create_max_bot")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a6d0f3d0294073e15ad8c944d21f423a52531ca1")]
 [assembly: System.Reflection.AssemblyProductAttribute("Create_max_bot")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Create_max_bot")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
