@@ -35,29 +35,32 @@ namespace Create_max_bot
             var token = bot_token.token;
             var client = new MaxBotClient(token);
 
-            Console.WriteLine("Старт PollUpdates...");
+           
 
             var _ = client.PollUpdatesWithCallback(
-            async (update, api) =>
-            {
-                Console.WriteLine($"[UPDATE] type={update.UpdateType}");
-
-                if (update is MessageCreatedUpdate messageCreated)
+                async (update, api) =>
                 {
-                    await HandleMessage(messageCreated, api);
-                }
-                else if (update is MessageCallbackUpdate callbackUpdate)
-                {
-                    await HandleCallback(callbackUpdate, api);
-                }
-            },
+                    Console.WriteLine($"[UPDATE] type={update.UpdateType}");
 
+                    // 1) если пользователь нажал кнопку "Начать"
+                    if (update is BotStartedUpdate started)
+                    {
+                        // если в started есть ChatId, лучше взять его
+                        var chatId = BotChatId;
+                        await SendMainMenu(chatId, api);
+                    }
+                    // 2) обычные сообщения
+                    else if (update is MessageCreatedUpdate messageCreated)
+                    {
+                        await HandleMessage(messageCreated, api);
+                    }
+                },
                 limit: 100,
                 timeout: 90,
                 types: new List<string>
                 {
-                    UpdateTypes.MessageCreated,
-                    UpdateTypes.MessageCallback  // обязательно добавь это
+            UpdateTypes.BotStarted,      // тип события при нажатии "Начать"
+            UpdateTypes.MessageCreated
                 });
 
             Console.WriteLine("Бот запущен. Нажми Enter для выхода.");
@@ -67,7 +70,7 @@ namespace Create_max_bot
 
 
 
-
+        // тут обработка сообщений 
         private static async Task HandleMessage(MessageCreatedUpdate update, IMaxBotClient api)
         {
             var text = update.Message?.Body?.Text ?? string.Empty;
@@ -78,78 +81,131 @@ namespace Create_max_bot
             if (string.IsNullOrWhiteSpace(text))
                 return;
 
-            if (text == "/start")
+            // Считаем и /start, и "Начать" запуском бота
+            if (text == "/start" || text.Equals("Начать", StringComparison.OrdinalIgnoreCase))
             {
                 await SendMainMenu(chatId, api);
-            }
-            else if (text == "Даты Дней открытых дверей")
-            {
-                await SendOpenDays(chatId, callbackId: null, api);
-            }
-        }
-
-
-        // обработка нажатий на инлайн кнопочки
-
-        private static async Task HandleCallback(MessageCallbackUpdate update, IMaxBotClient api)
-        {
-            var payload = update.Callback?.Payload;
-            var callbackId = update.Callback?.CallbackId;
-            // У тебя в MessageCallbackUpdate НЕТ ChatId в базовом классе,
-            // поэтому временно используем тот же чат, что и в обычных сообщениях:
-            var chatId = BotChatId;
-
-            Console.WriteLine($"[CALLBACK] payload='{payload}', callbackId='{callbackId}'");
-
-            if (chatId == 0 || string.IsNullOrEmpty(payload) || string.IsNullOrEmpty(callbackId))
                 return;
+            }
 
-            switch (payload)
+            // Команда "Спец N" для подробного описания специальности
+            if (text.StartsWith("Спец ", StringComparison.OrdinalIgnoreCase))
             {
-                case "open_days":
-                    await SendOpenDays(chatId, callbackId, api);
+                var numPart = text.Substring("Спец ".Length).Trim();
+                if (int.TryParse(numPart, out var specId))
+                {
+                    await SendSpecialtyDetails(chatId, api, specId);
+                    return;
+                }
+            }
+
+            // Основное меню
+            switch (text)
+            {
+                case "Даты Дней открытых дверей":
+                    await SendOpenDays(chatId, api);
                     break;
 
-                case "specialties":
-                    await SendSpecialties(chatId, callbackId, api);
+                case "Специальности":
+                    await SendSpecialties(chatId, api);
                     break;
 
-                case "buildings":
-                    await SendBuildings(chatId, callbackId, api);
+                case "Корпуса для ДОД":
+                    await SendBuildings(chatId, api);
                     break;
 
-                case "duration":
-                    await SendDuration(chatId, callbackId, api);
+                case "Срок обучения":
+                    await SendDuration(chatId, api);
                     break;
 
-                case "faq":
-                    await SendFaqMenu(chatId, callbackId, api);
+                case "Часто задаваемые вопросы":
+                    await SendFaqMenu(chatId, api);
                     break;
 
-                case "foreign":
-                    await SendInfoBlock(chatId, callbackId, api, infoType: "foreign");
+                case "Иностранные граждане":
+                    await SendInfoBlock(chatId, api, infoType: "foreign");
                     break;
 
-                case "universities":
-                    await SendInfoBlock(chatId, callbackId, api, infoType: "universities");
+                case "Сотрудничество с ВУЗами":
+                    await SendInfoBlock(chatId, api, infoType: "universities");
                     break;
 
-                case "transfer":
-                    await SendTransferInfo(chatId, callbackId, api);
+                case "Перевод из другого учебного заведения":
+                    await SendTransferInfo(chatId, api);
+                    break;
+
+                case "посетить сайт кгтс":
+                    await SendKgtcSiteLink(chatId, api);
                     break;
 
                 default:
-                    // FAQ
-                    if (payload.StartsWith("faq_") && int.TryParse(payload[4..], out var faqId))
-                        await SendFaqAnswer(chatId, callbackId, api, faqId);
-
-                    // Специальности
-                    if (payload.StartsWith("spec_") && int.TryParse(payload[5..], out var specId))
-                        await SendSpecialtyDetails(chatId, callbackId, api, specId);
-
-                break;
+                    Console.WriteLine("Я ничего не понял :((((");
+                    break;
             }
         }
+
+
+        //// обработка нажатий на инлайн кнопочки      не работает ((((
+
+        //private static async Task HandleCallback(MessageCallbackUpdate update, IMaxBotClient api)
+        //{
+        //    var payload = update.Callback?.Payload;
+        //    var callbackId = update.Callback?.CallbackId;
+        //    // У тебя в MessageCallbackUpdate НЕТ ChatId в базовом классе,
+        //    // поэтому временно используем тот же чат, что и в обычных сообщениях:
+        //    var chatId = BotChatId;
+
+        //    Console.WriteLine($"[CALLBACK] payload='{payload}', callbackId='{callbackId}'");
+
+        //    if (chatId == 0 || string.IsNullOrEmpty(payload) || string.IsNullOrEmpty(callbackId))
+        //        return;
+
+        //    switch (payload)
+        //    {
+        //        case "open_days":
+        //            await SendOpenDays(chatId, callbackId, api);
+        //            break;
+
+        //        case "specialties":
+        //            await SendSpecialties(chatId, callbackId, api);
+        //            break;
+
+        //        case "buildings":
+        //            await SendBuildings(chatId, callbackId, api);
+        //            break;
+
+        //        case "duration":
+        //            await SendDuration(chatId, callbackId, api);
+        //            break;
+
+        //        case "faq":
+        //            await SendFaqMenu(chatId, callbackId, api);
+        //            break;
+
+        //        case "foreign":
+        //            await SendInfoBlock(chatId, callbackId, api, infoType: "foreign");
+        //            break;
+
+        //        case "universities":
+        //            await SendInfoBlock(chatId, callbackId, api, infoType: "universities");
+        //            break;
+
+        //        case "transfer":
+        //            await SendTransferInfo(chatId, callbackId, api);
+        //            break;
+
+        //        default:
+        //            // FAQ
+        //            if (payload.StartsWith("faq_") && int.TryParse(payload[4..], out var faqId))
+        //                await SendFaqAnswer(chatId, callbackId, api, faqId);
+
+        //            // Специальности
+        //            if (payload.StartsWith("spec_") && int.TryParse(payload[5..], out var specId))
+        //                await SendSpecialtyDetails(chatId, callbackId, api, specId);
+
+        //        break;
+        //    }
+        //}
 
         // основная менюшка
         private static async Task SendMainMenu(long chatId, IMaxBotClient api)
@@ -163,8 +219,12 @@ namespace Create_max_bot
                  Row(CallbackButton("Часто задаваемые вопросы", "faq")),
                  Row(CallbackButton("Иностранные граждане", "foreign")),
                  Row(CallbackButton("Сотрудничество с ВУЗами", "universities")),
-                 Row(CallbackButton("Перевод из другого учебного заведения", "transfer"))
+                 Row(CallbackButton("Перевод из другого учебного заведения", "transfer")),
+                 Row(CallbackButton("посетить сайт кгтс", "kgtc_site"))
+
             };
+
+
 
             var keyboard = BuildInlineKeyboard(rows);
 
@@ -188,7 +248,7 @@ namespace Create_max_bot
 
 
         // день котрытых дверей
-        private static async Task SendOpenDays(long chatId, string? callbackId, IMaxBotClient api)
+        private static async Task SendOpenDays(long chatId, IMaxBotClient api)
         {
             var items = await LoadOpenDaysAsync();
 
@@ -199,24 +259,11 @@ namespace Create_max_bot
             foreach (var d in items)
                 sb.AppendLine($"{d.Id}. {d.Date:dd.MM.yyyy}");
 
-            if (!string.IsNullOrEmpty(callbackId))
+            await api.SendMessageAsync(new SendMessageRequest
             {
-                // вариант для callback-кнопки
-                await api.AnswerCallbackAsync(new AnswerCallbackRequest
-                {
-                    CallbackId = callbackId,
-                    Message = new NewMessageBody { Text = sb.ToString() }
-                });
-            }
-            else
-            {
-                // вариант для обычного сообщения
-                await api.SendMessageAsync(new SendMessageRequest
-                {
-                    ChatId = chatId,
-                    Text = sb.ToString()
-                });
-            }
+                ChatId = chatId,
+                Text = sb.ToString()
+            });
         }
 
 
@@ -249,34 +296,27 @@ namespace Create_max_bot
 
 
         // список специальностей 
-        private static async Task SendSpecialties(long chatId, string callbackId, IMaxBotClient api)
+        private static async Task SendSpecialties(long chatId, IMaxBotClient api)
         {
             var specialties = await LoadSpecialtiesAsync();
 
-            var rows = new List<List<MessageButton>>();
+            var sb = new StringBuilder();
+            sb.AppendLine("Список специальностей:");
+            sb.AppendLine();
 
             foreach (var s in specialties)
             {
-                var text = $"{s.Cod} — {s.Title}";
-                var payload = $"spec_{s.Id}";
-                rows.Add(Row(CallbackButton(text, payload)));
+                sb.AppendLine($"{s.Id}. {s.Cod} — {s.Title}");
             }
 
-            var keyboard = BuildInlineKeyboard(rows);
+            sb.AppendLine();
+            sb.AppendLine("Чтобы получить подробную информацию, введите:");
+            sb.AppendLine("Спец N (например: Спец 2)");
 
-            var msg = new NewMessageBody
+            await api.SendMessageAsync(new SendMessageRequest
             {
-                Text = "Выберите специальность:",
-                Attachments = new List<Attachment>
-                {
-                    keyboard
-                }
-            };
-
-            await api.AnswerCallbackAsync(new AnswerCallbackRequest
-            {
-                CallbackId = callbackId,
-                Message = msg
+                ChatId = chatId,
+                Text = sb.ToString()
             });
         }
 
@@ -312,47 +352,34 @@ namespace Create_max_bot
 
 
         // описание специальностей 
-        private static async Task SendSpecialtyDetails(long chatId, string callbackId, IMaxBotClient api, int specialtyId)
+        private static async Task SendSpecialtyDetails(long chatId, IMaxBotClient api, int specialtyId)
         {
             var details = await LoadSpecialtyDetailsAsync(specialtyId);
 
             if (details.Count == 0)
             {
-                await api.AnswerCallbackAsync(new AnswerCallbackRequest
+                await api.SendMessageAsync(new SendMessageRequest
                 {
-                    CallbackId = callbackId,
-                    Message = new NewMessageBody { Text = "Информация по этой специальности пока не заполнена." }
+                    ChatId = chatId,
+                    Text = "Информация по этой специальности пока не заполнена."
                 });
                 return;
             }
 
             var sb = new StringBuilder();
+            sb.AppendLine($"Подробная информация по специальности №{specialtyId}:");
+            sb.AppendLine();
+
             foreach (var line in details)
             {
                 sb.AppendLine("• " + line);
                 sb.AppendLine();
             }
 
-            var buttons = new List<List<MessageButton>>
+            await api.SendMessageAsync(new SendMessageRequest
             {
-                 Row(CallbackButton("Назад к списку специальностей", "specialties"))
-            };
-
-            var keyboard = BuildInlineKeyboard(buttons);
-
-            var msg = new NewMessageBody
-            {
-                Text = sb.ToString(),
-                Attachments = new List<Attachment>
-        {
-            keyboard
-        }
-            };
-
-            await api.AnswerCallbackAsync(new AnswerCallbackRequest
-            {
-                CallbackId = callbackId,
-                Message = msg
+                ChatId = chatId,
+                Text = sb.ToString()
             });
         }
 
@@ -392,7 +419,7 @@ namespace Create_max_bot
 
 
         // Коруса 
-        private static async Task SendBuildings(long chatId, string callbackId, IMaxBotClient api)
+        private static async Task SendBuildings(long chatId, IMaxBotClient api)
         {
             var items = await LoadBranchesAsync();
 
@@ -408,12 +435,10 @@ namespace Create_max_bot
                 sb.AppendLine();
             }
 
-            var msg = new NewMessageBody { Text = sb.ToString() };
-
-            await api.AnswerCallbackAsync(new AnswerCallbackRequest
+            await api.SendMessageAsync(new SendMessageRequest
             {
-                CallbackId = callbackId,
-                Message = msg
+                ChatId = chatId,
+                Text = sb.ToString()
             });
         }
 
@@ -450,7 +475,7 @@ namespace Create_max_bot
 
 
         // срок обучения 
-        private static async Task SendDuration(long chatId, string callbackId, IMaxBotClient api)
+        private static async Task SendDuration(long chatId, IMaxBotClient api)
         {
             var items = await LoadBasicEducationAsync();
 
@@ -461,12 +486,10 @@ namespace Create_max_bot
             foreach (var d in items)
                 sb.AppendLine("• " + d);
 
-            var msg = new NewMessageBody { Text = sb.ToString() };
-
-            await api.AnswerCallbackAsync(new AnswerCallbackRequest
+            await api.SendMessageAsync(new SendMessageRequest
             {
-                CallbackId = callbackId,
-                Message = msg
+                ChatId = chatId,
+                Text = sb.ToString()
             });
         }
 
@@ -499,38 +522,25 @@ namespace Create_max_bot
 
 
 
-
-
         // FAQ
-        // FAQ
-        private static async Task SendFaqMenu(long chatId, string callbackId, IMaxBotClient api)
+        private static async Task SendFaqMenu(long chatId, IMaxBotClient api)
         {
-            // У тебя сейчас один admission_info с id = 1
             var faqItems = await LoadFaqTitlesAsync(admissionId: 1);
 
-            var rows = new List<List<MessageButton>>();
+            var sb = new StringBuilder();
+            sb.AppendLine("Часто задаваемые вопросы:");
+            sb.AppendLine();
 
             foreach (var item in faqItems)
             {
-                var payload = $"faq_{item.Id}";
-                rows.Add(Row(CallbackButton(item.Question, payload)));
+                sb.AppendLine($"{item.Id}. {item.Question}");
+                sb.AppendLine();
             }
 
-            var keyboard = BuildInlineKeyboard(rows);
-
-            var msg = new NewMessageBody
+            await api.SendMessageAsync(new SendMessageRequest
             {
-                Text = "Часто задаваемые вопросы:",
-                Attachments = new List<Attachment>
-                {
-                     keyboard
-                }
-            };
-
-            await api.AnswerCallbackAsync(new AnswerCallbackRequest
-            {
-                CallbackId = callbackId,
-                Message = msg
+                ChatId = chatId,
+                Text = sb.ToString()
             });
         }
 
@@ -620,16 +630,14 @@ namespace Create_max_bot
 
 
         // инфа о примеме иностранных граждан
-        private static async Task SendInfoBlock(long chatId, string callbackId, IMaxBotClient api, string infoType)
+        private static async Task SendInfoBlock(long chatId, IMaxBotClient api, string infoType)
         {
             var content = await LoadInformationStatAsync(infoType);
 
-            var msg = new NewMessageBody { Text = content };
-
-            await api.AnswerCallbackAsync(new AnswerCallbackRequest
+            await api.SendMessageAsync(new SendMessageRequest
             {
-                CallbackId = callbackId,
-                Message = msg
+                ChatId = chatId,
+                Text = content
             });
         }
 
@@ -665,23 +673,28 @@ namespace Create_max_bot
 
 
         // перевод из другого учебного заведения 
-        private static async Task SendTransferInfo(long chatId, string callbackId, IMaxBotClient api)
+        private static async Task SendTransferInfo(long chatId, IMaxBotClient api)
         {
             var (top, middle, bottom) = await LoadTransferPageAsync();
 
             var sb = new StringBuilder();
-            sb.AppendLine(top);
-            sb.AppendLine();
-            sb.AppendLine(middle);
-            sb.AppendLine();
-            sb.AppendLine(bottom);
-
-            var msg = new NewMessageBody { Text = sb.ToString() };
-
-            await api.AnswerCallbackAsync(new AnswerCallbackRequest
+            if (!string.IsNullOrWhiteSpace(top))
             {
-                CallbackId = callbackId,
-                Message = msg
+                sb.AppendLine(top);
+                sb.AppendLine();
+            }
+            if (!string.IsNullOrWhiteSpace(middle))
+            {
+                sb.AppendLine(middle);
+                sb.AppendLine();
+            }
+            if (!string.IsNullOrWhiteSpace(bottom))
+                sb.AppendLine(bottom);
+
+            await api.SendMessageAsync(new SendMessageRequest
+            {
+                ChatId = chatId,
+                Text = sb.ToString()
             });
         }
 
@@ -711,6 +724,16 @@ namespace Create_max_bot
         }
 
 
+        private static async Task SendKgtcSiteLink(long chatId, IMaxBotClient api)
+        {
+            var text = "Перейти на сайт приёмной комиссии КГТС:\n" + "https://www.ktgs.ru/inspection/PriemnaaKomissia.php";
+
+            await api.SendMessageAsync(new SendMessageRequest
+            {
+                ChatId = chatId,
+                Text = text
+            });
+        }
 
 
 
@@ -732,15 +755,19 @@ namespace Create_max_bot
         private static List<MessageButton> Row(MessageButton button)
             => new List<MessageButton> { button };
 
+
+
+
         private static MessageButton CallbackButton(string text, string payload)
         {
             return new MessageButton
             {
                 Text = text
-                // payload сюда НЕ кладём, у MessageButton его нет
+                
             };
         }
 
+      
 
 
 
