@@ -55,14 +55,7 @@ namespace Create_max_bot
                             }
                             else if (update is MessageCreatedUpdate messageCreated)
                             {
-                                try
-                                {
-                                    await HandleMessage(messageCreated, api);
-                                }
-                                catch (Exception ex)
-                                {
-                                    Console.WriteLine($"[ERROR] HandleMessage: {ex}");
-                                }
+                                await HandleMessage(messageCreated, api);
                             }
                         },
                         limit: 100,
@@ -81,7 +74,7 @@ namespace Create_max_bot
 
                         if (idle > TimeSpan.FromSeconds(25))
                         {
-                            Console.WriteLine($"[WATCHDOG] Нет апдейтов {idle.TotalSeconds:F0} сек. Перезапуск клиента...");
+                            Console.WriteLine($"Нет апдейтов {idle.TotalSeconds:F0} сек. Перезапуск клиента...");
                             break;
                         }
                     }
@@ -90,14 +83,14 @@ namespace Create_max_bot
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Ошибка в Main/polling: {ex}");
-                    Console.WriteLine("Перезапуск через 5 секунд...");
-                    await Task.Delay(TimeSpan.FromSeconds(5));
+                    Console.WriteLine($"Ошибка в Main: {ex}");
+                    Console.WriteLine("Перезапуск через 1 секунду");
+                    await Task.Delay(TimeSpan.FromSeconds(1));
                 }
             }
         }
 
-        // ===== user_id -> chat_id =====
+        //  user_id  chat_id 
 
         private static async Task SaveUserChatAsync(long userId, long chatId)
         {
@@ -130,7 +123,7 @@ namespace Create_max_bot
             return result is long cid ? cid : 0;
         }
 
-        // ===== Обработка сообщений =====
+        // обработка сообщений 
 
         private static async Task HandleMessage(MessageCreatedUpdate update, IMaxBotClient api)
         {
@@ -146,11 +139,19 @@ namespace Create_max_bot
 
             if (chatId == 0)
             {
-                Console.WriteLine($"[WARN] ChatId for user {userId} not found in DB");
+                Console.WriteLine($"ChatId for user {userId} not found in DB");
                 return;
             }
 
             if (text == "/start" || text.Equals("Начать", StringComparison.OrdinalIgnoreCase))
+            {
+                await SendMainMenu(chatId, api);
+                return;
+            }
+
+            // Кнопка назад
+            if (text.Equals("Вернуться в меню", StringComparison.OrdinalIgnoreCase) ||
+                text.Equals("Назад", StringComparison.OrdinalIgnoreCase))
             {
                 await SendMainMenu(chatId, api);
                 return;
@@ -210,7 +211,7 @@ namespace Create_max_bot
             }
         }
 
-        // ===== Меню =====
+        //  меню 
 
         private static async Task SendMainMenu(long chatId, IMaxBotClient api)
         {
@@ -240,7 +241,7 @@ namespace Create_max_bot
             await api.SendMessageAsync(req);
         }
 
-        // ===== Дни открытых дверей =====
+        //  дни открытых дверей 
 
         private static async Task SendOpenDays(long chatId, IMaxBotClient api)
         {
@@ -253,10 +254,18 @@ namespace Create_max_bot
             foreach (var d in items)
                 sb.AppendLine($"{d.Id}. {d.Date:dd.MM.yyyy}");
 
+            // кнопка назад
+            var rows = new List<List<MessageButton>>
+            {
+                Row(CallbackButton("Вернуться в меню", "back_to_menu"))
+            };
+            var keyboard = BuildInlineKeyboard(rows);
+
             await api.SendMessageAsync(new SendMessageRequest
             {
                 ChatId = chatId,
-                Text = sb.ToString()
+                Text = sb.ToString(),
+                Attachments = new List<Attachment> { keyboard }
             });
         }
 
@@ -277,7 +286,7 @@ namespace Create_max_bot
             return result;
         }
 
-        // ===== Список специальностей =====
+        //  Список специальностей 
 
         private static async Task SendSpecialties(long chatId, IMaxBotClient api)
         {
@@ -296,10 +305,18 @@ namespace Create_max_bot
             sb.AppendLine("Чтобы получить подробную информацию, введите:");
             sb.AppendLine("Спец и номер интересующей специальности (например: Спец 2)");
 
+            // кнопка назад
+            var rows = new List<List<MessageButton>>
+            {
+                Row(CallbackButton("Вернуться в меню", "back_to_menu"))
+            };
+            var keyboard = BuildInlineKeyboard(rows);
+
             await api.SendMessageAsync(new SendMessageRequest
             {
                 ChatId = chatId,
-                Text = sb.ToString()
+                Text = sb.ToString(),
+                Attachments = new List<Attachment> { keyboard }
             });
         }
 
@@ -344,7 +361,7 @@ namespace Create_max_bot
             if (!string.IsNullOrWhiteSpace(duration))
             {
                 sb.AppendLine("Срок обучения:");
-                sb.AppendLine("• " + duration);
+                sb.AppendLine(duration);
                 sb.AppendLine();
             }
 
@@ -354,10 +371,18 @@ namespace Create_max_bot
                 sb.AppendLine();
             }
 
+            // кнопка назад
+            var rows = new List<List<MessageButton>>
+            {
+                Row(CallbackButton("Вернуться в меню", "back_to_menu"))
+            };
+            var keyboard = BuildInlineKeyboard(rows);
+
             await api.SendMessageAsync(new SendMessageRequest
             {
                 ChatId = chatId,
-                Text = sb.ToString()
+                Text = sb.ToString(),
+                Attachments = new List<Attachment> { keyboard }
             });
         }
 
@@ -406,7 +431,7 @@ namespace Create_max_bot
             if (list.Count == 0)
                 return "Информация о сроке обучения не найдена.";
 
-            return string.Join("\n• ", list);
+            return "• " + string.Join("\n• ", list);
         }
 
         // корпуса 
@@ -451,7 +476,7 @@ namespace Create_max_bot
             return result;
         }
 
-        // ===== Общий список сроков =====
+        //  Общий список сроков 
 
         private static async Task SendDuration(long chatId, IMaxBotClient api)
         {
@@ -488,7 +513,7 @@ namespace Create_max_bot
             return result;
         }
 
-        // ===== FAQ =====
+        //  FAQ
 
         private static async Task SendFaqMenu(long chatId, IMaxBotClient api)
         {
@@ -624,16 +649,6 @@ namespace Create_max_bot
                 Text = text
             });
         }
-
-
-
-
-
-
-
-
-
-
 
         // клавиатура 
 
