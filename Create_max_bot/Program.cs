@@ -17,7 +17,7 @@ namespace Create_max_bot
     internal class Program
     {
         private static readonly string ConnectionString =
-            "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=14102008_vld";
+            "Host=89.110.53.87;Port=50000;Database=max_bot;Username=postgres;Password=12345";
 
         private static DateTime _lastUpdateTime = DateTime.UtcNow;
 
