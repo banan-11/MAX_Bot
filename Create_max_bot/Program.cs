@@ -8,87 +8,154 @@ using MAX.Bot.Interfaces.Models.Request.Message.Attachment.Payloads;
 using Npgsql;
 using System;
 using System.Collections.Generic;
-
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using System.Linq;
 
 namespace Create_max_bot
 {
-
- 
-
-
-
     internal class Program
     {
-        // айди чата бота 
-        private const long BotChatId = 51951727;
+        private static readonly string ConnectionString =
+            "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=14102008_vld";
 
-
-        // строка подключения 
-        private static readonly string ConnectionString = "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=14102008_vld";
-
+        private static DateTime _lastUpdateTime = DateTime.UtcNow;
 
         static async Task Main(string[] args)
         {
             var token = bot_token.token;
-            var client = new MaxBotClient(token);
 
-           
-
-            var _ = client.PollUpdatesWithCallback(
-                async (update, api) =>
+            while (true)
+            {
+                try
                 {
-                    Console.WriteLine($"[UPDATE] type={update.UpdateType}");
+                    Console.WriteLine("Бот запущен. Для остановки закройте консоль.");
+                    var client = new MaxBotClient(token);
 
-                    // 1) если пользователь нажал кнопку "Начать"
-                    if (update is BotStartedUpdate started)
+                    _lastUpdateTime = DateTime.UtcNow;
+
+                    var _ = client.PollUpdatesWithCallback(
+                        async (update, api) =>
+                        {
+                            _lastUpdateTime = DateTime.UtcNow;
+
+                            Console.WriteLine($"[UPDATE] type={update.UpdateType}");
+
+                            if (update is BotStartedUpdate started)
+                            {
+                                long chatId = started.ChatId;
+                                long userId = started.User?.Id ?? 0;
+
+                                Console.WriteLine($"[BOT_STARTED] user={userId}, chat={chatId}");
+
+                                if (userId != 0)
+                                    await SaveUserChatAsync(userId, chatId);
+
+                                await SendMainMenu(chatId, api);
+                            }
+                            else if (update is MessageCreatedUpdate messageCreated)
+                            {
+                                try
+                                {
+                                    await HandleMessage(messageCreated, api);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"[ERROR] HandleMessage: {ex}");
+                                }
+                            }
+                        },
+                        limit: 100,
+                        timeout: 90,
+                        types: new List<string>
+                        {
+                            UpdateTypes.BotStarted,
+                            UpdateTypes.MessageCreated
+                        });
+
+                    while (true)
                     {
-                        // если в started есть ChatId, лучше взять его
-                        var chatId = BotChatId;
-                        await SendMainMenu(chatId, api);
+                        await Task.Delay(TimeSpan.FromSeconds(10));
+
+                        var idle = DateTime.UtcNow - _lastUpdateTime;
+
+                        if (idle > TimeSpan.FromSeconds(25))
+                        {
+                            Console.WriteLine($"[WATCHDOG] Нет апдейтов {idle.TotalSeconds:F0} сек. Перезапуск клиента...");
+                            break;
+                        }
                     }
-                    // 2) обычные сообщения
-                    else if (update is MessageCreatedUpdate messageCreated)
-                    {
-                        await HandleMessage(messageCreated, api);
-                    }
-                },
-                limit: 100,
-                timeout: 90,
-                types: new List<string>
+
+                    await Task.Delay(TimeSpan.FromSeconds(1));
+                }
+                catch (Exception ex)
                 {
-            UpdateTypes.BotStarted,      // тип события при нажатии "Начать"
-            UpdateTypes.MessageCreated
-                });
-
-            Console.WriteLine("Бот запущен. Нажми Enter для выхода.");
-            Console.ReadLine();
+                    Console.WriteLine($"Ошибка в Main/polling: {ex}");
+                    Console.WriteLine("Перезапуск через 5 секунд...");
+                    await Task.Delay(TimeSpan.FromSeconds(5));
+                }
+            }
         }
 
+        // ===== user_id -> chat_id =====
 
+        private static async Task SaveUserChatAsync(long userId, long chatId)
+        {
+            await using var conn = new NpgsqlConnection(ConnectionString);
+            await conn.OpenAsync();
 
+            const string sql = @"
+                INSERT INTO user_chats (user_id, chat_id)
+                VALUES (@uid, @cid)
+                ON CONFLICT (user_id) DO UPDATE
+                SET chat_id = EXCLUDED.chat_id;
+            ";
 
-        // тут обработка сообщений 
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("uid", userId);
+            cmd.Parameters.AddWithValue("cid", chatId);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        private static async Task<long> GetChatIdByUserAsync(long userId)
+        {
+            await using var conn = new NpgsqlConnection(ConnectionString);
+            await conn.OpenAsync();
+
+            const string sql = "SELECT chat_id FROM user_chats WHERE user_id = @uid LIMIT 1";
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("uid", userId);
+
+            var result = await cmd.ExecuteScalarAsync();
+            return result is long cid ? cid : 0;
+        }
+
+        // ===== Обработка сообщений =====
+
         private static async Task HandleMessage(MessageCreatedUpdate update, IMaxBotClient api)
         {
             var text = update.Message?.Body?.Text ?? string.Empty;
-            var chatId = BotChatId;
+            long userId = update.Message?.Sender?.Id ?? 0;
 
-            Console.WriteLine($"[MESSAGE] text='{text}'");
+            Console.WriteLine($"[MESSAGE] from user={userId}, text='{text}'");
 
-            if (string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrWhiteSpace(text) || userId == 0)
                 return;
 
-            // Считаем и /start, и "Начать" запуском бота
+            long chatId = await GetChatIdByUserAsync(userId);
+
+            if (chatId == 0)
+            {
+                Console.WriteLine($"[WARN] ChatId for user {userId} not found in DB");
+                return;
+            }
+
             if (text == "/start" || text.Equals("Начать", StringComparison.OrdinalIgnoreCase))
             {
                 await SendMainMenu(chatId, api);
                 return;
             }
 
-            // Команда "Спец N" для подробного описания специальности
             if (text.StartsWith("Спец ", StringComparison.OrdinalIgnoreCase))
             {
                 var numPart = text.Substring("Спец ".Length).Trim();
@@ -99,7 +166,6 @@ namespace Create_max_bot
                 }
             }
 
-            // Основное меню
             switch (text)
             {
                 case "Даты Дней открытых дверей":
@@ -144,87 +210,22 @@ namespace Create_max_bot
             }
         }
 
+        // ===== Меню =====
 
-        //// обработка нажатий на инлайн кнопочки      не работает ((((
-
-        //private static async Task HandleCallback(MessageCallbackUpdate update, IMaxBotClient api)
-        //{
-        //    var payload = update.Callback?.Payload;
-        //    var callbackId = update.Callback?.CallbackId;
-        //    // У тебя в MessageCallbackUpdate НЕТ ChatId в базовом классе,
-        //    // поэтому временно используем тот же чат, что и в обычных сообщениях:
-        //    var chatId = BotChatId;
-
-        //    Console.WriteLine($"[CALLBACK] payload='{payload}', callbackId='{callbackId}'");
-
-        //    if (chatId == 0 || string.IsNullOrEmpty(payload) || string.IsNullOrEmpty(callbackId))
-        //        return;
-
-        //    switch (payload)
-        //    {
-        //        case "open_days":
-        //            await SendOpenDays(chatId, callbackId, api);
-        //            break;
-
-        //        case "specialties":
-        //            await SendSpecialties(chatId, callbackId, api);
-        //            break;
-
-        //        case "buildings":
-        //            await SendBuildings(chatId, callbackId, api);
-        //            break;
-
-        //        case "duration":
-        //            await SendDuration(chatId, callbackId, api);
-        //            break;
-
-        //        case "faq":
-        //            await SendFaqMenu(chatId, callbackId, api);
-        //            break;
-
-        //        case "foreign":
-        //            await SendInfoBlock(chatId, callbackId, api, infoType: "foreign");
-        //            break;
-
-        //        case "universities":
-        //            await SendInfoBlock(chatId, callbackId, api, infoType: "universities");
-        //            break;
-
-        //        case "transfer":
-        //            await SendTransferInfo(chatId, callbackId, api);
-        //            break;
-
-        //        default:
-        //            // FAQ
-        //            if (payload.StartsWith("faq_") && int.TryParse(payload[4..], out var faqId))
-        //                await SendFaqAnswer(chatId, callbackId, api, faqId);
-
-        //            // Специальности
-        //            if (payload.StartsWith("spec_") && int.TryParse(payload[5..], out var specId))
-        //                await SendSpecialtyDetails(chatId, callbackId, api, specId);
-
-        //        break;
-        //    }
-        //}
-
-        // основная менюшка
         private static async Task SendMainMenu(long chatId, IMaxBotClient api)
         {
             var rows = new List<List<MessageButton>>
             {
-                 Row(CallbackButton("Даты Дней открытых дверей", "open_days")),
-                 Row(CallbackButton("Специальности", "specialties")),
-                 Row(CallbackButton("Корпуса для ДОД", "buildings")),
-                 Row(CallbackButton("Срок обучения", "duration")),
-                 Row(CallbackButton("Часто задаваемые вопросы", "faq")),
-                 Row(CallbackButton("Иностранные граждане", "foreign")),
-                 Row(CallbackButton("Сотрудничество с ВУЗами", "universities")),
-                 Row(CallbackButton("Перевод из другого учебного заведения", "transfer")),
-                 Row(CallbackButton("посетить сайт кгтс", "kgtc_site"))
-
+                Row(CallbackButton("Даты Дней открытых дверей", "open_days")),
+                Row(CallbackButton("Специальности", "specialties")),
+                Row(CallbackButton("Корпуса для ДОД", "buildings")),
+                Row(CallbackButton("Срок обучения", "duration")),
+                Row(CallbackButton("Часто задаваемые вопросы", "faq")),
+                Row(CallbackButton("Иностранные граждане", "foreign")),
+                Row(CallbackButton("Сотрудничество с ВУЗами", "universities")),
+                Row(CallbackButton("Перевод из другого учебного заведения", "transfer")),
+                Row(CallbackButton("посетить сайт кгтс", "kgtc_site"))
             };
-
-
 
             var keyboard = BuildInlineKeyboard(rows);
 
@@ -233,21 +234,14 @@ namespace Create_max_bot
                 ChatId = chatId,
                 Text = "Выберите интересующий раздел:",
                 Format = MessageFormat.Markdown,
-                Attachments = new List<Attachment>
-                {
-                    keyboard
-                }
+                Attachments = new List<Attachment> { keyboard }
             };
 
             await api.SendMessageAsync(req);
         }
 
+        // ===== Дни открытых дверей =====
 
-
-
-
-
-        // день котрытых дверей
         private static async Task SendOpenDays(long chatId, IMaxBotClient api)
         {
             var items = await LoadOpenDaysAsync();
@@ -266,36 +260,25 @@ namespace Create_max_bot
             });
         }
 
-
-        // Дни открытых дверей SQL
         private static async Task<List<(int Id, DateTime Date)>> LoadOpenDaysAsync()
         {
             var result = new List<(int, DateTime)>();
-
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
-            const string sql = @"SELECT id, even_date
-                                 FROM open_door_time
-                                 ORDER BY even_date";
-
+            const string sql = "SELECT id, even_date FROM open_door_time ORDER BY even_date";
             await using var cmd = new NpgsqlCommand(sql, conn);
             await using var reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())
             {
-                var id = reader.GetInt32(0);
-                var date = reader.GetDateTime(1);
-                result.Add((id, date));
+                result.Add((reader.GetInt32(0), reader.GetDateTime(1)));
             }
-
             return result;
         }
 
+        // ===== Список специальностей =====
 
-
-
-        // список специальностей 
         private static async Task SendSpecialties(long chatId, IMaxBotClient api)
         {
             var specialties = await LoadSpecialtiesAsync();
@@ -311,7 +294,7 @@ namespace Create_max_bot
 
             sb.AppendLine();
             sb.AppendLine("Чтобы получить подробную информацию, введите:");
-            sb.AppendLine("Спец N (например: Спец 2)");
+            sb.AppendLine("Спец и номер интересующей специальности (например: Спец 2)");
 
             await api.SendMessageAsync(new SendMessageRequest
             {
@@ -320,43 +303,31 @@ namespace Create_max_bot
             });
         }
 
-
-        // список специальностей SQL
         private static async Task<List<(int Id, string Cod, string Title)>> LoadSpecialtiesAsync()
         {
             var result = new List<(int, string, string)>();
-
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
-            const string sql = @"SELECT id, cod, title
-                                 FROM specialties_list
-                                 ORDER BY id";
-
+            const string sql = "SELECT id, cod, title FROM specialties_list ORDER BY id";
             await using var cmd = new NpgsqlCommand(sql, conn);
             await using var reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())
             {
-                var id = reader.GetInt32(0);
-                var cod = reader.GetString(1);
-                var title = reader.GetString(2);
-                result.Add((id, cod, title));
+                result.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2)));
             }
-
             return result;
         }
 
+        // информация о специальности + срок =====
 
-
-
-
-        // описание специальностей 
         private static async Task SendSpecialtyDetails(long chatId, IMaxBotClient api, int specialtyId)
         {
             var details = await LoadSpecialtyDetailsAsync(specialtyId);
+            var duration = await LoadDurationForSpecialtyAsync(specialtyId);
 
-            if (details.Count == 0)
+            if (details.Count == 0 && string.IsNullOrWhiteSpace(duration))
             {
                 await api.SendMessageAsync(new SendMessageRequest
                 {
@@ -369,6 +340,13 @@ namespace Create_max_bot
             var sb = new StringBuilder();
             sb.AppendLine($"Подробная информация по специальности №{specialtyId}:");
             sb.AppendLine();
+
+            if (!string.IsNullOrWhiteSpace(duration))
+            {
+                sb.AppendLine("Срок обучения:");
+                sb.AppendLine("• " + duration);
+                sb.AppendLine();
+            }
 
             foreach (var line in details)
             {
@@ -383,42 +361,56 @@ namespace Create_max_bot
             });
         }
 
-
-        // описание специальностей SQL
         private static async Task<List<string>> LoadSpecialtyDetailsAsync(int specialtyId)
         {
             var result = new List<string>();
-
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
-            const string sql = @"SELECT content
-                                 FROM filling_in_data_for_specializations
-                                 WHERE specialty_id = @id
-                                 ORDER BY id";
-
+            const string sql = "SELECT content FROM filling_in_data_for_specializations WHERE specialty_id = @id ORDER BY id";
             await using var cmd = new NpgsqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("id", specialtyId);
 
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
-                var content = reader.GetString(0);
-                result.Add(content);
+                result.Add(reader.GetString(0));
             }
-
             return result;
         }
 
+        private static async Task<string> LoadDurationForSpecialtyAsync(int specialtyId)
+        {
+            await using var conn = new NpgsqlConnection(ConnectionString);
+            await conn.OpenAsync();
 
+            const string sql = @"
+                SELECT be.education_info
+                FROM specialty_basic_education sbe
+                JOIN basic_education be ON be.id = sbe.basic_education_id
+                WHERE sbe.specialty_id = @specId
+                ORDER BY be.id;
+            ";
 
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("specId", specialtyId);
 
+            var list = new List<string>();
 
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                list.Add(reader.GetString(0));
+            }
 
+            if (list.Count == 0)
+                return "Информация о сроке обучения не найдена.";
 
+            return string.Join("\n• ", list);
+        }
 
+        // корпуса 
 
-        // Коруса 
         private static async Task SendBuildings(long chatId, IMaxBotClient api)
         {
             var items = await LoadBranchesAsync();
@@ -442,39 +434,25 @@ namespace Create_max_bot
             });
         }
 
-
-
-        // корпуса SQL
         private static async Task<List<(string BranchName, string Address, string Metro)>> LoadBranchesAsync()
         {
             var result = new List<(string, string, string)>();
-
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
-            const string sql = @"SELECT branch_name, adress, metro_station
-                                 FROM college_branches
-                                 ORDER BY id";
-
+            const string sql = "SELECT branch_name, adress, metro_station FROM college_branches ORDER BY id";
             await using var cmd = new NpgsqlCommand(sql, conn);
             await using var reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())
             {
-                var name = reader.GetString(0);
-                var addr = reader.GetString(1);
-                var metro = reader.GetString(2);
-                result.Add((name, addr, metro));
+                result.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
             }
-
             return result;
         }
 
+        // ===== Общий список сроков =====
 
-
-
-
-        // срок обучения 
         private static async Task SendDuration(long chatId, IMaxBotClient api)
         {
             var items = await LoadBasicEducationAsync();
@@ -493,36 +471,25 @@ namespace Create_max_bot
             });
         }
 
-
-
-
-        // срок обучения SQL
         private static async Task<List<string>> LoadBasicEducationAsync()
         {
             var result = new List<string>();
-
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
-            const string sql = @"SELECT education_info
-                                 FROM basic_education
-                                 ORDER BY id";
-
+            const string sql = "SELECT education_info FROM basic_education ORDER BY id";
             await using var cmd = new NpgsqlCommand(sql, conn);
             await using var reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())
             {
-                var info = reader.GetString(0);
-                result.Add(info);
+                result.Add(reader.GetString(0));
             }
-
             return result;
         }
 
+        // ===== FAQ =====
 
-
-        // FAQ
         private static async Task SendFaqMenu(long chatId, IMaxBotClient api)
         {
             var faqItems = await LoadFaqTitlesAsync(admissionId: 1);
@@ -544,23 +511,13 @@ namespace Create_max_bot
             });
         }
 
-
-
-
-        //  FAQ SQL
         private static async Task<List<(int Id, string Question)>> LoadFaqTitlesAsync(int admissionId)
         {
             var result = new List<(int, string)>();
-
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
-            const string sql = @"SELECT id, question
-                                 FROM admission_faq
-                                 WHERE admission_id = @adm
-                                   AND display_order > 0
-                                 ORDER BY display_order";
-
+            const string sql = "SELECT id, question FROM admission_faq WHERE admission_id = @adm AND display_order > 0 ORDER BY display_order";
             await using var cmd = new NpgsqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("adm", admissionId);
 
@@ -571,65 +528,11 @@ namespace Create_max_bot
                 var q = reader.IsDBNull(1) ? "" : reader.GetString(1);
                 result.Add((id, q));
             }
-
             return result;
         }
 
+        // ===== Инфоблоки (иностранцы / ВУЗы) =====
 
-
-
-        // оветы на вопросы FAQ
-        private static async Task SendFaqAnswer(long chatId, string callbackId, IMaxBotClient api, int faqId)
-        {
-            var answer = await LoadFaqAnswerAsync(faqId);
-
-            var buttons = new List<List<MessageButton>>
-            {
-                Row(CallbackButton("Назад к вопросам", "faq"))
-            };
-
-            var keyboard = BuildInlineKeyboard(buttons); // это InlineKeyboardAttachment
-
-            var msg = new NewMessageBody
-            {
-                Text = answer ?? "Ответ не найден.",
-                Attachments = new List<Attachment>
-                {
-                     keyboard
-                }
-            };
-
-            await api.AnswerCallbackAsync(new AnswerCallbackRequest
-            {
-                CallbackId = callbackId,
-                Message = msg
-            });
-        }
-
-
-
-        // Ответ на вопросы FAQ SQL
-        private static async Task<string?> LoadFaqAnswerAsync(int faqId)
-        {
-            await using var conn = new NpgsqlConnection(ConnectionString);
-            await conn.OpenAsync();
-
-            const string sql = @"SELECT answer
-                                 FROM admission_faq
-                                 WHERE id = @id";
-
-            await using var cmd = new NpgsqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("id", faqId);
-
-            var result = await cmd.ExecuteScalarAsync();
-            return result as string;
-        }
-
-
-
-
-
-        // инфа о примеме иностранных граждан
         private static async Task SendInfoBlock(long chatId, IMaxBotClient api, string infoType)
         {
             var content = await LoadInformationStatAsync(infoType);
@@ -641,9 +544,6 @@ namespace Create_max_bot
             });
         }
 
-
-
-        // инфа о примеме иностранных граждан slq
         private static async Task<string> LoadInformationStatAsync(string type)
         {
             var filter = type switch
@@ -656,13 +556,7 @@ namespace Create_max_bot
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
-            const string sql = @"SELECT content
-                                 FROM information_stat
-                                 WHERE specialty_id = 1
-                                   AND title LIKE @title
-                                 ORDER BY id
-                                 LIMIT 1";
-
+            const string sql = "SELECT content FROM information_stat WHERE specialty_id = 1 AND title LIKE @title ORDER BY id LIMIT 1";
             await using var cmd = new NpgsqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("title", filter + "%");
 
@@ -670,9 +564,8 @@ namespace Create_max_bot
             return result as string ?? "Информация временно недоступна.";
         }
 
+        // перевод из другого учебного заведения
 
-
-        // перевод из другого учебного заведения 
         private static async Task SendTransferInfo(long chatId, IMaxBotClient api)
         {
             var (top, middle, bottom) = await LoadTransferPageAsync();
@@ -698,17 +591,13 @@ namespace Create_max_bot
             });
         }
 
-
-        // перевод из другого учебного заведения SQL
+        // перевод из другого учебного заведения sql
         private static async Task<(string Top, string Middle, string Bottom)> LoadTransferPageAsync()
         {
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
-            const string sql = @"SELECT top_content, middle_text, bottom_content
-                                 FROM transfer_page_content
-                                 WHERE id = 1";
-
+            const string sql = "SELECT top_content, middle_text, bottom_content FROM transfer_page_content WHERE id = 1";
             await using var cmd = new NpgsqlCommand(sql, conn);
             await using var reader = await cmd.ExecuteReaderAsync();
 
@@ -719,14 +608,15 @@ namespace Create_max_bot
                 var bottom = reader.IsDBNull(2) ? "" : reader.GetString(2);
                 return (top, middle, bottom);
             }
-
             return ("", "", "");
         }
 
+        // ссылка на сайт 
 
         private static async Task SendKgtcSiteLink(long chatId, IMaxBotClient api)
         {
-            var text = "Перейти на сайт приёмной комиссии КГТС:\n" + "https://www.ktgs.ru/inspection/PriemnaaKomissia.php";
+            var text = "Перейти на сайт приёмной комиссии КГТС:\n" +
+                       "https://www.ktgs.ru/inspection/PriemnaaKomissia.php";
 
             await api.SendMessageAsync(new SendMessageRequest
             {
@@ -737,6 +627,15 @@ namespace Create_max_bot
 
 
 
+
+
+
+
+
+
+
+
+        // клавиатура 
 
         private static InlineKeyboardAttachment BuildInlineKeyboard(IReadOnlyList<List<MessageButton>> rows)
         {
@@ -751,32 +650,15 @@ namespace Create_max_bot
             };
         }
 
-
         private static List<MessageButton> Row(MessageButton button)
             => new List<MessageButton> { button };
-
-
-
 
         private static MessageButton CallbackButton(string text, string payload)
         {
             return new MessageButton
             {
                 Text = text
-                
             };
         }
-
-      
-
-
-
-
-
-
     }
-
-
 }
-
- 
