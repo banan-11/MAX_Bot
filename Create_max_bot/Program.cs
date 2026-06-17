@@ -157,7 +157,6 @@ namespace Create_max_bot
             }
 
             // 1. Попытка воспринять текст как название специальности
-            // (это будет работать для нажатия на кнопки со специальностями)
             var specialtyIdByTitle = await TryGetSpecialtyIdByTitleAsync(text);
             if (specialtyIdByTitle > 0)
             {
@@ -166,7 +165,6 @@ namespace Create_max_bot
             }
 
             // 2. Старые форматы "Специальность N" и "Спец N" оставим как запасной путь
-
             if (text.StartsWith("Специальность ", StringComparison.OrdinalIgnoreCase))
             {
                 var numPart = text.Substring("Специальность ".Length).Trim();
@@ -191,7 +189,7 @@ namespace Create_max_bot
 
             switch (text)
             {
-                case "Даты Дней открытых дверей":
+                case "Даты дней открытых дверей":
                     await SendOpenDays(chatId, api);
                     break;
 
@@ -203,6 +201,7 @@ namespace Create_max_bot
                     await SendSpecialtiesByBranch(chatId, api);
                     break;
 
+                case "Корпуса колледжа":
                 case "Корпуса для ДОД":
                     await SendBuildings(chatId, api);
                     break;
@@ -229,6 +228,10 @@ namespace Create_max_bot
 
                 case "посетить сайт кгтс":
                     await SendKgtcSiteLink(chatId, api);
+                    break;
+
+                case "Контакты":
+                    await SendContacts(chatId, api);
                     break;
 
                 default:
@@ -266,16 +269,17 @@ namespace Create_max_bot
         {
             var rows = new List<List<MessageButton>>
             {
-                Row(CallbackButton("Даты Дней открытых дверей", "open_days")),
+                Row(CallbackButton("Даты дней открытых дверей", "open_days")),
+                Row(CallbackButton("Корпуса колледжа", "buildings")),
                 Row(CallbackButton("Специальности", "specialties")),
                 Row(CallbackButton("Специальности по площадкам", "specialties_by_branch")),
-                Row(CallbackButton("Корпуса для ДОД", "buildings")),
                 Row(CallbackButton("Срок обучения", "duration")),
                 Row(CallbackButton("Часто задаваемые вопросы", "faq")),
                 Row(CallbackButton("Иностранные граждане", "foreign")),
                 Row(CallbackButton("Сотрудничество с ВУЗами", "universities")),
                 Row(CallbackButton("Перевод из другого учебного заведения", "transfer")),
-                Row(CallbackButton("посетить сайт кгтс", "kgtc_site"))
+                Row(CallbackButton("посетить сайт кгтс", "kgtc_site")),
+                Row(CallbackButton("Контакты", "contacts"))
             };
 
             var keyboard = BuildInlineKeyboard(rows);
@@ -303,6 +307,9 @@ namespace Create_max_bot
 
             foreach (var d in items)
                 sb.AppendLine($"{d.Id}. {d.Date:dd.MM.yyyy}");
+
+            sb.AppendLine();
+            sb.AppendLine("Дни открытых дверей проходят единовременно во всех учебных корпусах Колледжа.");
 
             var rows = new List<List<MessageButton>>
             {
@@ -350,12 +357,11 @@ namespace Create_max_bot
                 sb.AppendLine($"{s.Id}. {s.Cod} — {s.Title}");
             }
 
-            // ИЗМЕНЕНО: каждая кнопка в отдельной строке
             var rows = new List<List<MessageButton>>();
 
             foreach (var s in specialties)
             {
-                var btnText = s.Title; // только название
+                var btnText = s.Title;
                 rows.Add(new List<MessageButton> { CallbackButton(btnText, "spec") });
             }
 
@@ -442,13 +448,11 @@ namespace Create_max_bot
                 return;
             }
 
-            //  название по id
             string title = await LoadSpecialtyTitleAsync(specialtyId);
 
             var sb = new StringBuilder();
             if (!string.IsNullOrEmpty(title))
                 sb.AppendLine(title);
-            // sb.AppendLine($"(специальность №{specialtyId})");
             sb.AppendLine();
 
             if (!string.IsNullOrWhiteSpace(duration))
@@ -631,24 +635,6 @@ namespace Create_max_bot
             return result;
         }
 
-        // старый вариант без id
-        //private static async Task<List<(string BranchName, string Address, string Metro)>> LoadBranchesAsync()
-        //{
-        //    var result = new List<(string, string, string)>();
-        //    await using var conn = new NpgsqlConnection(ConnectionString);
-        //    await conn.OpenAsync();
-
-        //    const string sql = "SELECT branch_name, adress, metro_station FROM college_branches ORDER BY id";
-        //    await using var cmd = new NpgsqlCommand(sql, conn);
-        //    await using var reader = await cmd.ExecuteReaderAsync();
-
-        //    while (await reader.ReadAsync())
-        //    {
-        //        result.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
-        //    }
-        //    return result;
-        //}
-
         // Специальности по площадкам (корпусам)
 
         private static async Task SendSpecialtiesByBranch(long chatId, IMaxBotClient api)
@@ -657,7 +643,7 @@ namespace Create_max_bot
             intro.AppendLine("1 год после 9 все обучаются на Луначарского 66,");
             intro.AppendLine("далее распределяются по направлениям подготовки.");
             intro.AppendLine();
-            intro.AppendLine("Ниже — корпуса и доступные в них специальности:");
+            intro.AppendLine("Ниже — корпуса и доступные в них специальныеости:");
 
             await api.SendMessageAsync(new SendMessageRequest
             {
@@ -688,14 +674,13 @@ namespace Create_max_bot
                     continue;
                 }
 
-                sb.AppendLine("Доступные специальности:");
+                sb.AppendLine("Доступные специальныеости:");
 
-                // ИЗМЕНЕНО: каждая специальность – отдельная строка кнопок
                 var rows = new List<List<MessageButton>>();
 
                 foreach (var s in specialties)
                 {
-                    var btnText = s.Title; // только название
+                    var btnText = s.Title;
                     rows.Add(new List<MessageButton> { CallbackButton(btnText, "spec") });
                 }
 
@@ -919,6 +904,34 @@ namespace Create_max_bot
             return ("", "", "");
         }
 
+        // КОНТАКТЫ 
+
+        private static async Task SendContacts(long chatId, IMaxBotClient api)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Контактная информация:");
+            sb.AppendLine();
+            sb.AppendLine("ТЕЛЕФОН приемной комиссии: (812) 252-44-47");
+            sb.AppendLine();
+            sb.AppendLine("Юридический адрес: 197022, Санкт-Петербург, наб. реки Карповки, дом 11а;");
+            sb.AppendLine("Часы работы: по рабочим дням 9.00-17.30, обед 13.00-13.30;");
+            sb.AppendLine("Приемная директора: (812) 234-23-12;");
+            sb.AppendLine("Адрес электронной почты: ktgs@obr.gov.spb.ru");
+
+            var rows = new List<List<MessageButton>>
+            {
+                Row(CallbackButton("Вернуться в меню", "back_to_menu"))
+            };
+            var keyboard = BuildInlineKeyboard(rows);
+
+            await api.SendMessageAsync(new SendMessageRequest
+            {
+                ChatId = chatId,
+                Text = sb.ToString(),
+                Attachments = new List<Attachment> { keyboard }
+            });
+        }
+
         // ссылка на сайт 
 
         private static async Task SendKgtcSiteLink(long chatId, IMaxBotClient api)
@@ -960,7 +973,6 @@ namespace Create_max_bot
 
         private static MessageButton CallbackButton(string text, string payload)
         {
-            // payload этой библиотекой не используется, оставляем только текст
             return new MessageButton
             {
                 Text = text
