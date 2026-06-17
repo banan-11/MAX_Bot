@@ -148,11 +148,17 @@ namespace Create_max_bot
                 return;
             }
 
-            // Кнопка назад
+            // Кнопки "назад"
             if (text.Equals("Вернуться в меню", StringComparison.OrdinalIgnoreCase) ||
                 text.Equals("Назад", StringComparison.OrdinalIgnoreCase))
             {
                 await SendMainMenu(chatId, api);
+                return;
+            }
+
+            if (text.Equals("Вернуться к корпусам", StringComparison.OrdinalIgnoreCase))
+            {
+                await SendSpecialtiesByBranch(chatId, api);
                 return;
             }
 
@@ -164,7 +170,7 @@ namespace Create_max_bot
                 return;
             }
 
-            // 2. Старые форматы "Специальность N" и "Спец N" оставим как запасной путь
+            // 2. Старые форматы "Специальность N" и "Спец N"
             if (text.StartsWith("Специальность ", StringComparison.OrdinalIgnoreCase))
             {
                 var numPart = text.Substring("Специальность ".Length).Trim();
@@ -505,7 +511,7 @@ namespace Create_max_bot
 
             var rows = new List<List<MessageButton>>
             {
-                Row(CallbackButton("Вернуться в меню", "back_to_menu"))
+                Row(CallbackButton("Вернуться к корпусам", "back_to_branches"))
             };
             var keyboard = BuildInlineKeyboard(rows);
 
@@ -693,6 +699,20 @@ namespace Create_max_bot
                     Attachments = new List<Attachment> { keyboard }
                 });
             }
+
+            // Дополнительное сообщение с кнопкой в главное меню
+            var backRows = new List<List<MessageButton>>
+            {
+                Row(CallbackButton("Вернуться в меню", "back_to_menu"))
+            };
+            var backKeyboard = BuildInlineKeyboard(backRows);
+
+            await api.SendMessageAsync(new SendMessageRequest
+            {
+                ChatId = chatId,
+                Text = "Чтобы вернуться в главное меню, нажмите кнопку ниже:",
+                Attachments = new List<Attachment> { backKeyboard }
+            });
         }
 
         // общий список сроков 
