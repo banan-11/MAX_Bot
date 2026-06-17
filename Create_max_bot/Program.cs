@@ -16,7 +16,7 @@ namespace Create_max_bot
 {
     internal class Program
     {
-        private static readonly string ConnectionString = "Host=89.110.53.87;Port=50000;Database=max_bot;Username=postgres;Password=12345";
+        private static readonly string ConnectionString = Db_Config.ConnectionString;
 
         private static DateTime _lastUpdateTime = DateTime.UtcNow;
 
@@ -89,7 +89,7 @@ namespace Create_max_bot
             }
         }
 
-        // user_id  chat_id 
+        // user_id -> chat_id
 
         private static async Task SaveUserChatAsync(long userId, long chatId)
         {
@@ -156,7 +156,17 @@ namespace Create_max_bot
                 return;
             }
 
-            // выбор специальности с кнопки "Специальность N"
+            // 1. Попытка воспринять текст как название специальности
+            // (это будет работать для нажатия на кнопки со специальностями)
+            var specialtyIdByTitle = await TryGetSpecialtyIdByTitleAsync(text);
+            if (specialtyIdByTitle > 0)
+            {
+                await SendSpecialtyDetails(chatId, api, specialtyIdByTitle);
+                return;
+            }
+
+            // 2. Старые форматы "Специальность N" и "Спец N" оставим как запасной путь
+
             if (text.StartsWith("Специальность ", StringComparison.OrdinalIgnoreCase))
             {
                 var numPart = text.Substring("Специальность ".Length).Trim();
@@ -167,7 +177,6 @@ namespace Create_max_bot
                 }
             }
 
-            // старый вариант "Спец N" можно оставить как запасной путь
             if (text.StartsWith("Спец ", StringComparison.OrdinalIgnoreCase))
             {
                 var numPart = text.Substring("Спец ".Length).Trim();
@@ -178,6 +187,8 @@ namespace Create_max_bot
                 }
             }
 
+            // 3. Остальные команды по точному тексту
+
             switch (text)
             {
                 case "Даты Дней открытых дверей":
@@ -186,6 +197,10 @@ namespace Create_max_bot
 
                 case "Специальности":
                     await SendSpecialties(chatId, api);
+                    break;
+
+                case "Специальности по площадкам":
+                    await SendSpecialtiesByBranch(chatId, api);
                     break;
 
                 case "Корпуса для ДОД":
@@ -222,7 +237,30 @@ namespace Create_max_bot
             }
         }
 
-        //  главное меню 
+        // Поиск id специальности по полному названию (точное совпадение)
+        private static async Task<int> TryGetSpecialtyIdByTitleAsync(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title))
+                return 0;
+
+            await using var conn = new NpgsqlConnection(ConnectionString);
+            await conn.OpenAsync();
+
+            const string sql = @"
+                SELECT id
+                FROM specialties_list
+                WHERE title = @t
+                LIMIT 1;
+            ";
+
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("t", title.Trim());
+
+            var result = await cmd.ExecuteScalarAsync();
+            return result is int i ? i : 0;
+        }
+
+        // главное меню 
 
         private static async Task SendMainMenu(long chatId, IMaxBotClient api)
         {
@@ -230,6 +268,7 @@ namespace Create_max_bot
             {
                 Row(CallbackButton("Даты Дней открытых дверей", "open_days")),
                 Row(CallbackButton("Специальности", "specialties")),
+                Row(CallbackButton("Специальности по площадкам", "specialties_by_branch")),
                 Row(CallbackButton("Корпуса для ДОД", "buildings")),
                 Row(CallbackButton("Срок обучения", "duration")),
                 Row(CallbackButton("Часто задаваемые вопросы", "faq")),
@@ -252,7 +291,7 @@ namespace Create_max_bot
             await api.SendMessageAsync(req);
         }
 
-        //  дни открытых дверей 
+        // дни открытых дверей 
 
         private static async Task SendOpenDays(long chatId, IMaxBotClient api)
         {
@@ -296,7 +335,7 @@ namespace Create_max_bot
             return result;
         }
 
-        //  Список специальностей 
+        // список специальностей 
 
         private static async Task SendSpecialties(long chatId, IMaxBotClient api)
         {
@@ -311,24 +350,14 @@ namespace Create_max_bot
                 sb.AppendLine($"{s.Id}. {s.Cod} — {s.Title}");
             }
 
-            // строим клавиатуру с кнопками по специальностям
+            // ИЗМЕНЕНО: каждая кнопка в отдельной строке
             var rows = new List<List<MessageButton>>();
-            List<MessageButton> currentRow = new List<MessageButton>();
 
             foreach (var s in specialties)
             {
-                var btnText = $"Специальность {s.Id}";
-                currentRow.Add(CallbackButton(btnText, $"spec_{s.Id}"));
-
-                if (currentRow.Count == 2)
-                {
-                    rows.Add(currentRow);
-                    currentRow = new List<MessageButton>();
-                }
+                var btnText = s.Title; // только название
+                rows.Add(new List<MessageButton> { CallbackButton(btnText, "spec") });
             }
-
-            if (currentRow.Count > 0)
-                rows.Add(currentRow);
 
             rows.Add(new List<MessageButton>
             {
@@ -351,7 +380,10 @@ namespace Create_max_bot
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
-            const string sql = "SELECT id, cod, title FROM specialties_list ORDER BY id";
+            const string sql =
+                "SELECT id, cod, title " +
+                "FROM specialties_list " +
+                "ORDER BY id";
             await using var cmd = new NpgsqlCommand(sql, conn);
             await using var reader = await cmd.ExecuteReaderAsync();
 
@@ -362,7 +394,31 @@ namespace Create_max_bot
             return result;
         }
 
-        // информация о специальности + срок =====
+        // спецухи по branch_id для корпуса
+
+        private static async Task<List<(int Id, string Cod, string Title)>> LoadSpecialtiesByBranchAsync(int branchId)
+        {
+            var result = new List<(int, string, string)>();
+            await using var conn = new NpgsqlConnection(ConnectionString);
+            await conn.OpenAsync();
+
+            const string sql =
+                "SELECT id, cod, title " +
+                "FROM specialties_list " +
+                "WHERE branch_id = @bid " +
+                "ORDER BY id";
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("bid", branchId);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                result.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2)));
+            }
+            return result;
+        }
+
+        // информация о специальности + срок 
 
         private static async Task SendSpecialtyDetails(long chatId, IMaxBotClient api, int specialtyId)
         {
@@ -386,8 +442,13 @@ namespace Create_max_bot
                 return;
             }
 
+            //  название по id
+            string title = await LoadSpecialtyTitleAsync(specialtyId);
+
             var sb = new StringBuilder();
-            sb.AppendLine($"Подробная информация по специальности №{specialtyId}:");
+            if (!string.IsNullOrEmpty(title))
+                sb.AppendLine(title);
+            // sb.AppendLine($"(специальность №{specialtyId})");
             sb.AppendLine();
 
             if (!string.IsNullOrWhiteSpace(duration))
@@ -453,6 +514,19 @@ namespace Create_max_bot
             });
         }
 
+        private static async Task<string> LoadSpecialtyTitleAsync(int specialtyId)
+        {
+            await using var conn = new NpgsqlConnection(ConnectionString);
+            await conn.OpenAsync();
+
+            const string sql = "SELECT title FROM specialties_list WHERE id = @id LIMIT 1";
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("id", specialtyId);
+
+            var result = await cmd.ExecuteScalarAsync();
+            return result as string ?? string.Empty;
+        }
+
         private static async Task<List<string>> LoadSpecialtyDetailsAsync(int specialtyId)
         {
             var result = new List<string>();
@@ -505,7 +579,7 @@ namespace Create_max_bot
 
         private static async Task SendBuildings(long chatId, IMaxBotClient api)
         {
-            var items = await LoadBranchesAsync();
+            var items = await LoadBranchesFullAsync();
 
             var sb = new StringBuilder();
             sb.AppendLine("Учебные корпуса колледжа:");
@@ -535,24 +609,108 @@ namespace Create_max_bot
 
         // корпуса sql 
 
-        private static async Task<List<(string BranchName, string Address, string Metro)>> LoadBranchesAsync()
+        private static async Task<List<(int Id, string BranchName, string Address, string Metro)>> LoadBranchesFullAsync()
         {
-            var result = new List<(string, string, string)>();
+            var result = new List<(int, string, string, string)>();
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
-            const string sql = "SELECT branch_name, adress, metro_station FROM college_branches ORDER BY id";
+            const string sql = "SELECT id, branch_name, adress, metro_station FROM college_branches ORDER BY id";
             await using var cmd = new NpgsqlCommand(sql, conn);
             await using var reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())
             {
-                result.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+                result.Add((
+                    reader.GetInt32(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3)
+                ));
             }
             return result;
         }
 
-        //  Общий список сроков 
+        // старый вариант без id
+        //private static async Task<List<(string BranchName, string Address, string Metro)>> LoadBranchesAsync()
+        //{
+        //    var result = new List<(string, string, string)>();
+        //    await using var conn = new NpgsqlConnection(ConnectionString);
+        //    await conn.OpenAsync();
+
+        //    const string sql = "SELECT branch_name, adress, metro_station FROM college_branches ORDER BY id";
+        //    await using var cmd = new NpgsqlCommand(sql, conn);
+        //    await using var reader = await cmd.ExecuteReaderAsync();
+
+        //    while (await reader.ReadAsync())
+        //    {
+        //        result.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+        //    }
+        //    return result;
+        //}
+
+        // Специальности по площадкам (корпусам)
+
+        private static async Task SendSpecialtiesByBranch(long chatId, IMaxBotClient api)
+        {
+            var intro = new StringBuilder();
+            intro.AppendLine("1 год после 9 все обучаются на Луначарского 66,");
+            intro.AppendLine("далее распределяются по направлениям подготовки.");
+            intro.AppendLine();
+            intro.AppendLine("Ниже — корпуса и доступные в них специальности:");
+
+            await api.SendMessageAsync(new SendMessageRequest
+            {
+                ChatId = chatId,
+                Text = intro.ToString()
+            });
+
+            var branches = await LoadBranchesFullAsync();
+
+            foreach (var b in branches)
+            {
+                var specialties = await LoadSpecialtiesByBranchAsync(b.Id);
+
+                var sb = new StringBuilder();
+                sb.AppendLine(b.BranchName);
+                sb.AppendLine(b.Address);
+                sb.AppendLine("Метро: " + b.Metro);
+                sb.AppendLine();
+
+                if (specialties.Count == 0)
+                {
+                    sb.AppendLine("Информация о специальностях для этого корпуса пока не заполнена.");
+                    await api.SendMessageAsync(new SendMessageRequest
+                    {
+                        ChatId = chatId,
+                        Text = sb.ToString()
+                    });
+                    continue;
+                }
+
+                sb.AppendLine("Доступные специальности:");
+
+                // ИЗМЕНЕНО: каждая специальность – отдельная строка кнопок
+                var rows = new List<List<MessageButton>>();
+
+                foreach (var s in specialties)
+                {
+                    var btnText = s.Title; // только название
+                    rows.Add(new List<MessageButton> { CallbackButton(btnText, "spec") });
+                }
+
+                var keyboard = BuildInlineKeyboard(rows);
+
+                await api.SendMessageAsync(new SendMessageRequest
+                {
+                    ChatId = chatId,
+                    Text = sb.ToString(),
+                    Attachments = new List<Attachment> { keyboard }
+                });
+            }
+        }
+
+        // общий список сроков 
 
         private static async Task SendDuration(long chatId, IMaxBotClient api)
         {
@@ -579,7 +737,7 @@ namespace Create_max_bot
             });
         }
 
-        //  Общий список сроков sql 
+        // общий список сроков sql 
 
         private static async Task<List<string>> LoadBasicEducationAsync()
         {
@@ -598,7 +756,7 @@ namespace Create_max_bot
             return result;
         }
 
-        //  FAQ 
+        // FAQ 
 
         private static async Task SendFaqMenu(long chatId, IMaxBotClient api)
         {
@@ -628,7 +786,7 @@ namespace Create_max_bot
             });
         }
 
-        //  FAQ sql 
+        // FAQ sql 
 
         private static async Task<List<(int Id, string Question)>> LoadFaqTitlesAsync(int admissionId)
         {
@@ -655,7 +813,7 @@ namespace Create_max_bot
             return result;
         }
 
-        //   иностранцы  ВУЗы 
+        // иностранцы / ВУЗы 
 
         private static async Task SendInfoBlock(long chatId, IMaxBotClient api, string infoType)
         {
@@ -675,7 +833,7 @@ namespace Create_max_bot
             });
         }
 
-        //   иностранцы  ВУЗы sql 
+        // иностранцы / ВУЗы sql 
 
         private static async Task<string> LoadInformationStatAsync(string type)
         {
@@ -802,6 +960,7 @@ namespace Create_max_bot
 
         private static MessageButton CallbackButton(string text, string payload)
         {
+            // payload этой библиотекой не используется, оставляем только текст
             return new MessageButton
             {
                 Text = text
