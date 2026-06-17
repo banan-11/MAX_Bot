@@ -40,7 +40,7 @@ cd REPO
 
 ```csharp
 private static readonly string ConnectionString =
-    "Host=89.110.53.87;Port=50000;Database=max_bot;Username=postgres;Password";
+    "Host=...;Port=...;Database=max_bot;Username=...;Password=...";
 ```
 
 Замени на свои реальные данные (host, port, db, user, password).
