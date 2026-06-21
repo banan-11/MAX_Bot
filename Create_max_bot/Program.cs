@@ -20,6 +20,9 @@ namespace Create_max_bot
 
         private static DateTime _lastUpdateTime = DateTime.UtcNow;
 
+        // пользователи, от которых ждём текст вопроса
+        private static readonly HashSet<long> WaitingForQuestionFromUser = new HashSet<long>();
+
         static async Task Main(string[] args)
         {
             var token = bot_token.token;
@@ -65,9 +68,13 @@ namespace Create_max_bot
                             UpdateTypes.MessageCreated
                         });
 
+                    // цикл опроса БД на наличие ответов от операторов
                     while (true)
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(10));
+                        await Task.Delay(TimeSpan.FromSeconds(5));
+
+                        // отправляем пользователям новые ответы из user_questions
+                        await CheckAndSendAnswersAsync(client);
 
                         var idle = DateTime.UtcNow - _lastUpdateTime;
 
@@ -144,6 +151,7 @@ namespace Create_max_bot
 
             if (text == "/start" || text.Equals("Начать", StringComparison.OrdinalIgnoreCase))
             {
+                WaitingForQuestionFromUser.Remove(userId);
                 await SendMainMenu(chatId, api);
                 return;
             }
@@ -152,17 +160,43 @@ namespace Create_max_bot
             if (text.Equals("Вернуться в меню", StringComparison.OrdinalIgnoreCase) ||
                 text.Equals("Назад", StringComparison.OrdinalIgnoreCase))
             {
+                WaitingForQuestionFromUser.Remove(userId);
                 await SendMainMenu(chatId, api);
                 return;
             }
 
             if (text.Equals("Вернуться к корпусам", StringComparison.OrdinalIgnoreCase))
             {
+                WaitingForQuestionFromUser.Remove(userId);
                 await SendSpecialtiesByBranch(chatId, api);
                 return;
             }
 
-            // 1. Попытка воспринять текст как название специальности
+            // ЕСЛИ МЫ ЖДЁМ ВОПРОС ОТ ЭТОГО ПОЛЬЗОВАТЕЛЯ
+            if (WaitingForQuestionFromUser.Contains(userId))
+            {
+                Console.WriteLine($"[QUESTION_MODE] got question from user={userId}, chat={chatId}, text='{text}'");
+
+                await SaveUserQuestionToDbAsync(userId, chatId, text);
+                WaitingForQuestionFromUser.Remove(userId);
+
+                var rowsWait = new List<List<MessageButton>>
+                {
+                    Row(CallbackButton("Вернуться в меню", "back_to_menu"))
+                };
+                var kbWait = BuildInlineKeyboard(rowsWait);
+
+                await api.SendMessageAsync(new SendMessageRequest
+                {
+                    ChatId = chatId,
+                    Text = "Ваш вопрос отправлен. Пожалуйста, ожидайте — поддержка скоро ответит вам.",
+                    Attachments = new List<Attachment> { kbWait }
+                });
+
+                return;
+            }
+
+            //  Попытка воспринять текст как название специальности
             var specialtyIdByTitle = await TryGetSpecialtyIdByTitleAsync(text);
             if (specialtyIdByTitle > 0)
             {
@@ -170,28 +204,7 @@ namespace Create_max_bot
                 return;
             }
 
-            // 2. Старые форматы "Специальность N" и "Спец N"
-            if (text.StartsWith("Специальность ", StringComparison.OrdinalIgnoreCase))
-            {
-                var numPart = text.Substring("Специальность ".Length).Trim();
-                if (int.TryParse(numPart, out var specIdFromButton))
-                {
-                    await SendSpecialtyDetails(chatId, api, specIdFromButton);
-                    return;
-                }
-            }
-
-            if (text.StartsWith("Спец ", StringComparison.OrdinalIgnoreCase))
-            {
-                var numPart = text.Substring("Спец ".Length).Trim();
-                if (int.TryParse(numPart, out var specId))
-                {
-                    await SendSpecialtyDetails(chatId, api, specId);
-                    return;
-                }
-            }
-
-            // 3. Остальные команды по точному тексту
+            //  Остальные команды по точному тексту
 
             switch (text)
             {
@@ -240,13 +253,104 @@ namespace Create_max_bot
                     await SendContacts(chatId, api);
                     break;
 
+                case "Задать вопрос":
+                    await StartQuestionFlow(chatId, userId, api);
+                    break;
+
                 default:
                     Console.WriteLine("Я ничего не понял :((((");
                     break;
             }
         }
 
-        // Поиск id специальности по полному названию (точное совпадение)
+        //  ОТПРАВКА ОТВЕТОВ ПОЛЬЗОВАТЕЛЮ ИЗ user_questions 
+
+        private static async Task CheckAndSendAnswersAsync(IMaxBotClient api)
+        {
+            try
+            {
+                await using var conn = new NpgsqlConnection(ConnectionString);
+                await conn.OpenAsync();
+
+                const string selectSql = @"
+                    SELECT id, user_id, chat_id, question_text, answer_text, answered_by
+                    FROM user_questions
+                    WHERE status = 'answered';
+                ";
+
+                await using var selectCmd = new NpgsqlCommand(selectSql, conn);
+                await using var reader = await selectCmd.ExecuteReaderAsync();
+
+                var answersToSend = new List<(int Id, long UserId, long ChatId, string QuestionText, string AnswerText, string AnsweredBy)>();
+
+                while (await reader.ReadAsync())
+                {
+                    int id = reader.GetInt32(0);
+                    long userId = reader.GetInt64(1);
+                    long chatId = reader.GetInt64(2);
+                    string questionText = reader.IsDBNull(3) ? "" : reader.GetString(3);
+                    string answerText = reader.IsDBNull(4) ? "" : reader.GetString(4);
+                    string answeredBy = reader.IsDBNull(5) ? "" : reader.GetString(5);
+
+                    if (!string.IsNullOrWhiteSpace(answerText))
+                        answersToSend.Add((id, userId, chatId, questionText, answerText, answeredBy));
+                }
+
+                await reader.CloseAsync();
+
+                foreach (var item in answersToSend)
+                {
+                    try
+                    {
+                        var msg = new StringBuilder();
+                        msg.AppendLine("Техническая поддержка КГТС ответила на ваш вопрос.");
+                        msg.AppendLine();
+                        msg.AppendLine("Ответ:");
+                        msg.AppendLine(item.AnswerText);
+                        if (!string.IsNullOrWhiteSpace(item.AnsweredBy))
+                        {
+                            msg.AppendLine();
+                            msg.AppendLine($"Ответил: {item.AnsweredBy}");
+                        }
+
+                        Console.WriteLine($"[ANSWER] send to user={item.UserId}, chat={item.ChatId}, qid={item.Id}");
+
+                        var rows = new List<List<MessageButton>>
+                        {
+                            Row(CallbackButton("Вернуться в меню", "back_to_menu"))
+                        };
+                        var keyboard = BuildInlineKeyboard(rows);
+
+                        await api.SendMessageAsync(new SendMessageRequest
+                        {
+                            ChatId = item.ChatId,
+                            Text = msg.ToString(),
+                            Attachments = new List<Attachment> { keyboard }
+                        });
+
+                        const string updateSql = @"
+                            UPDATE user_questions
+                            SET status = 'sent'
+                            WHERE id = @id;
+                        ";
+
+                        await using var updateCmd = new NpgsqlCommand(updateSql, conn);
+                        updateCmd.Parameters.AddWithValue("id", item.Id);
+                        await updateCmd.ExecuteNonQueryAsync();
+                    }
+                    catch (Exception exSend)
+                    {
+                        Console.WriteLine(" error sending to user: " + exSend);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[ANSWER] error in CheckAndSendAnswersAsync: " + ex);
+            }
+        }
+
+        // Поиск id специальности по полному названию 
         private static async Task<int> TryGetSpecialtyIdByTitleAsync(string title)
         {
             if (string.IsNullOrWhiteSpace(title))
@@ -285,7 +389,8 @@ namespace Create_max_bot
                 Row(CallbackButton("Сотрудничество с ВУЗами", "universities")),
                 Row(CallbackButton("Перевод из другого учебного заведения", "transfer")),
                 Row(CallbackButton("посетить сайт кгтс", "kgtc_site")),
-                Row(CallbackButton("Контакты", "contacts"))
+                Row(CallbackButton("Контакты", "contacts")),
+                Row(CallbackButton("Задать вопрос", "ask_question"))
             };
 
             var keyboard = BuildInlineKeyboard(rows);
@@ -299,6 +404,48 @@ namespace Create_max_bot
             };
 
             await api.SendMessageAsync(req);
+        }
+
+        // запуск кнопки задать вопрос
+
+        private static async Task StartQuestionFlow(long chatId, long userId, IMaxBotClient api)
+        {
+            WaitingForQuestionFromUser.Add(userId);
+            Console.WriteLine($"[QUESTION_MODE] start for user={userId}, chat={chatId}");
+
+            await api.SendMessageAsync(new SendMessageRequest
+            {
+                ChatId = chatId,
+                Text = "Напишите, пожалуйста, свой вопрос одним сообщением.\n" +
+                       "Он будет передан сотрудникам приёмной комиссии."
+            });
+        }
+
+        // сохранение вопроса в user_questions
+        private static async Task SaveUserQuestionToDbAsync(long userId, long chatId, string questionText)
+        {
+            try
+            {
+                await using var conn = new NpgsqlConnection(ConnectionString);
+                await conn.OpenAsync();
+
+                const string sql = @"
+                    INSERT INTO user_questions (user_id, chat_id, question_text, status, is_blocked)
+                    VALUES (@uid, @cid, @text, 'new', EXISTS (SELECT 1 FROM blocked_users WHERE user_id = @uid));
+                ";
+
+                await using var cmd = new NpgsqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("uid", userId);
+                cmd.Parameters.AddWithValue("cid", chatId);
+                cmd.Parameters.AddWithValue("text", questionText);
+
+                var rows = await cmd.ExecuteNonQueryAsync();
+                Console.WriteLine($"saved to DB: rows={rows}, user={userId}, chat={chatId}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("error saving to DB: " + ex);
+            }
         }
 
         // дни открытых дверей 
@@ -617,8 +764,6 @@ namespace Create_max_bot
             });
         }
 
-        // корпуса sql 
-
         private static async Task<List<(int Id, string BranchName, string Address, string Metro)>> LoadBranchesFullAsync()
         {
             var result = new List<(int, string, string, string)>();
@@ -700,7 +845,6 @@ namespace Create_max_bot
                 });
             }
 
-            // Дополнительное сообщение с кнопкой в главное меню
             var backRows = new List<List<MessageButton>>
             {
                 Row(CallbackButton("Вернуться в меню", "back_to_menu"))
@@ -742,8 +886,6 @@ namespace Create_max_bot
             });
         }
 
-        // общий список сроков sql 
-
         private static async Task<List<string>> LoadBasicEducationAsync()
         {
             var result = new List<string>();
@@ -761,20 +903,38 @@ namespace Create_max_bot
             return result;
         }
 
-        // FAQ 
+        // FAQ – из faq_items, без первой мусорной записи и с ровным форматированием
 
         private static async Task SendFaqMenu(long chatId, IMaxBotClient api)
         {
-            var faqItems = await LoadFaqTitlesAsync(admissionId: 1);
+            var faqItems = await LoadFaqItemsAsync();
+
+            // выкидываем мусорную запись типа "string/string"
+            faqItems = faqItems
+                .Where(f =>
+                    !(string.Equals(f.Question.Trim(), "string", StringComparison.OrdinalIgnoreCase) &&
+                      string.Equals(f.Answer.Trim(), "string", StringComparison.OrdinalIgnoreCase)))
+                .ToList();
 
             var sb = new StringBuilder();
-            sb.AppendLine("Часто задаваемые вопросы:");
-            sb.AppendLine();
 
-            foreach (var item in faqItems)
+            if (faqItems.Count == 0)
             {
-                sb.AppendLine($"{item.Id}. {item.Question}");
+                sb.AppendLine("Пока нет доступных часто задаваемых вопросов приёмной комиссии.");
+            }
+            else
+            {
+                sb.AppendLine("Часто задаваемые вопросы приёмной комиссии:");
                 sb.AppendLine();
+
+                int i = 1;
+                foreach (var item in faqItems)
+                {
+                    sb.AppendLine($"{i}. вопрос: {item.Question}");
+                    sb.AppendLine($"   ответ: {item.Answer}");
+                    sb.AppendLine();
+                    i++;
+                }
             }
 
             var rows = new List<List<MessageButton>>
@@ -791,30 +951,32 @@ namespace Create_max_bot
             });
         }
 
-        // FAQ sql 
-
-        private static async Task<List<(int Id, string Question)>> LoadFaqTitlesAsync(int admissionId)
+        private static async Task<List<(int Id, string Question, string Answer, string Category, int DisplayOrder)>> LoadFaqItemsAsync()
         {
-            var result = new List<(int, string)>();
+            var result = new List<(int, string, string, string, int)>();
             await using var conn = new NpgsqlConnection(ConnectionString);
             await conn.OpenAsync();
 
             const string sql = @"
-                SELECT id, question
-                FROM admission_faq
-                WHERE admission_id = @adm AND display_order > 0
-                ORDER BY display_order
+                SELECT id, question, answer, category, display_order
+                FROM faq_items
+                ORDER BY display_order ASC, id ASC;
             ";
-            await using var cmd = new NpgsqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("adm", admissionId);
 
+            await using var cmd = new NpgsqlCommand(sql, conn);
             await using var reader = await cmd.ExecuteReaderAsync();
+
             while (await reader.ReadAsync())
             {
-                var id = reader.GetInt32(0);
-                var q = reader.IsDBNull(1) ? "" : reader.GetString(1);
-                result.Add((id, q));
+                int id = reader.GetInt32(0);
+                string question = reader.IsDBNull(1) ? "" : reader.GetString(1);
+                string answer = reader.IsDBNull(2) ? "" : reader.GetString(2);
+                string category = reader.IsDBNull(3) ? "" : reader.GetString(3);
+                int displayOrder = reader.IsDBNull(4) ? 0 : reader.GetInt32(4);
+
+                result.Add((id, question, answer, category, displayOrder));
             }
+
             return result;
         }
 
@@ -837,8 +999,6 @@ namespace Create_max_bot
                 Attachments = new List<Attachment> { keyboard }
             });
         }
-
-        // иностранцы / ВУЗы sql 
 
         private static async Task<string> LoadInformationStatAsync(string type)
         {
@@ -898,8 +1058,6 @@ namespace Create_max_bot
                 Attachments = new List<Attachment> { keyboard }
             });
         }
-
-        // перевод из другого учебного заведения sql 
 
         private static async Task<(string Top, string Middle, string Bottom)> LoadTransferPageAsync()
         {
@@ -974,7 +1132,6 @@ namespace Create_max_bot
         }
 
         // клавиатура 
-
         private static InlineKeyboardAttachment BuildInlineKeyboard(IReadOnlyList<List<MessageButton>> rows)
         {
             return new InlineKeyboardAttachment
